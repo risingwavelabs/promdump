@@ -11,7 +11,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,9 +29,9 @@ func main() {
 		Action: runPush,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
-				Name:     "filename",
-				Aliases:  []string{"f"},
-				Usage:    "Input filename",
+				Name:     "path",
+				Aliases:  []string{"p"},
+				Usage:    "The path of the input file or folder",
 				Required: true,
 			},
 			&cli.StringFlag{
@@ -72,7 +74,7 @@ type Item struct {
 func runPush(c *cli.Context) error {
 	vmEndpoint := c.String("vm-endpoint")
 	useLegacyFormat := c.Bool("use-legacy-format")
-	filename := c.String("filename")
+	path := c.String("path")
 	batchSize := c.Int("batch-size")
 
 	if batchSize <= 0 {
@@ -81,79 +83,109 @@ func runPush(c *cli.Context) error {
 	if len(vmEndpoint) == 0 {
 		return fmt.Errorf("vm-endpoint is required")
 	}
-	if len(filename) == 0 {
-		return fmt.Errorf("filename is required")
+	if len(path) == 0 {
+		return fmt.Errorf("path is required")
 	}
 
-	file, err := os.Open(filename)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-
-	fileInfo, err := file.Stat()
+	fi, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("failed to get file info: %w", err)
 	}
-	fileSize := fileInfo.Size()
+	files := []string{}
+	if fi.IsDir() {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return fmt.Errorf("failed to read directory: %w", err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			files = append(files, filepath.Join(path, entry.Name()))
+		}
+	} else {
+		files = []string{path}
+	}
 
 	pw := NewPushWorker(c.Context, vmEndpoint, batchSize)
 	defer pw.Close()
 
-	gzReader, err := gzip.NewReader(file)
-	if err != nil {
-		return fmt.Errorf("failed to create gzip reader: %w", err)
-	}
-	defer gzReader.Close()
+	for i, filename := range files {
+		fmt.Printf("\nPushing %s (%d/%d)\n", filename, i+1, len(files))
 
-	scanner := bufio.NewScanner(gzReader)
-	scanner.Buffer(make([]byte, 1024*1024), 100*1024*1024) // 100MB max line size
-	for scanner.Scan() {
-		line := scanner.Bytes()
-
-		// Get current position in the compressed file
-		currentPos, err := file.Seek(0, io.SeekCurrent)
+		file, err := os.Open(filename)
 		if err != nil {
-			return fmt.Errorf("failed to get current file position: %w", err)
+			return fmt.Errorf("failed to open file: %w", err)
 		}
+		defer file.Close()
 
-		// Display progress based on compressed file position
-		fmt.Printf("\033[2K\rprogress: %s", utils.RenderProgressBar(float64(currentPos)/float64(fileSize)))
+		fileInfo, err := file.Stat()
+		if err != nil {
+			return fmt.Errorf("failed to get file info: %w", err)
+		}
+		fileSize := fileInfo.Size()
 
-		if len(line) == 0 {
-			continue
-		}
-		if !useLegacyFormat {
-			pw.Push(line)
-			continue
-		}
-
-		var legacy LegacyFormat
-		if err := json.Unmarshal(line, &legacy); err != nil {
-			return fmt.Errorf("failed to unmarshal line: %w", err)
-		}
-		item := Item{
-			Metric: legacy.Metric,
-		}
-
-		for _, v := range legacy.Values {
-			val, err := strconv.ParseFloat(v[1].(string), 64)
+		var reader io.Reader
+		if strings.HasSuffix(filename, ".gz") {
+			gzReader, err := gzip.NewReader(file)
 			if err != nil {
-				return fmt.Errorf("failed to parse timestamp: %w", err)
+				return fmt.Errorf("failed to create gzip reader: %w", err)
 			}
-			item.Timestamps = append(item.Timestamps, int64(1000*v[0].(float64)))
-			item.Values = append(item.Values, val)
+			defer gzReader.Close()
+			reader = gzReader
+		} else {
+			reader = file
 		}
-		l, err := json.Marshal(item)
-		if err != nil {
-			return fmt.Errorf("failed to marshal item: %w", err)
-		}
-		l = append(l, '\n')
-		pw.Push(l)
-	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading file: %w", err)
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 1024*1024), 100*1024*1024) // 100MB max line size
+		for scanner.Scan() {
+			line := scanner.Bytes()
+
+			// Get current position in the compressed file
+			currentPos, err := file.Seek(0, io.SeekCurrent)
+			if err != nil {
+				return fmt.Errorf("failed to get current file position: %w", err)
+			}
+
+			// Display progress based on compressed file position
+			fmt.Printf("\033[2K\rprogress: %s", utils.RenderProgressBar(float64(currentPos)/float64(fileSize)))
+
+			if len(line) == 0 {
+				continue
+			}
+			if !useLegacyFormat {
+				pw.Push(line)
+				continue
+			}
+
+			var legacy LegacyFormat
+			if err := json.Unmarshal(line, &legacy); err != nil {
+				return fmt.Errorf("failed to unmarshal line: %w", err)
+			}
+			item := Item{
+				Metric: legacy.Metric,
+			}
+
+			for _, v := range legacy.Values {
+				val, err := strconv.ParseFloat(v[1].(string), 64)
+				if err != nil {
+					return fmt.Errorf("failed to parse timestamp: %w", err)
+				}
+				item.Timestamps = append(item.Timestamps, int64(1000*v[0].(float64)))
+				item.Values = append(item.Values, val)
+			}
+			l, err := json.Marshal(item)
+			if err != nil {
+				return fmt.Errorf("failed to marshal item: %w", err)
+			}
+			l = append(l, '\n')
+			pw.Push(l)
+		}
+
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("error reading file: %w", err)
+		}
 	}
 
 	return pw.Flush(c.Context)

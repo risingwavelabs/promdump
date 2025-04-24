@@ -58,8 +58,8 @@ func main() {
 				Value: "",
 			},
 			&cli.BoolFlag{
-				Name:  "plain",
-				Usage: "Output in uncompressed NDJSON format",
+				Name:  "gzip",
+				Usage: "Output in compressed NDJSON format",
 				Value: false,
 			},
 			&cli.Float64Flag{
@@ -88,19 +88,6 @@ func main() {
 
 // runDump implements the 'dump' command to dump Prometheus data to a file
 func runDump(c *cli.Context) error {
-	outDir := c.String("out")
-	if outDir == "" {
-		return fmt.Errorf("out is required")
-	}
-	if outDir == "." {
-		// get current directory
-		wd, err := os.Getwd()
-		if err != nil {
-			return errors.Wrap(err, "failed to get current directory")
-		}
-		outDir = wd
-	}
-
 	endpoint := c.String("endpoint")
 	if endpoint == "" {
 		return fmt.Errorf("prometheus endpoint is required")
@@ -139,16 +126,62 @@ func runDump(c *cli.Context) error {
 		return errors.Wrap(err, "failed to parse end time")
 	}
 
+	// Parse output directory
+	outDir := c.String("out")
+	if outDir == "" {
+		return fmt.Errorf("out is required")
+	}
+	if outDir == "." {
+		// get current directory
+		wd, err := os.Getwd()
+		if err != nil {
+			return errors.Wrap(err, "failed to get current directory")
+		}
+		// digest
+		digest := sha256.New()
+		digest.Write([]byte(fmt.Sprintf("%s-%s-%s-%s-%s-%v-%d", endpoint, startStr, endStr, step, c.String("query"), c.Bool("gzip"), parts)))
+		digestStr := hex.EncodeToString(digest.Sum(nil))[:8]
+		outDir = filepath.Join(wd, fmt.Sprintf("promdump_%s", digestStr))
+	} else { // user specified output directory
+		if !filepath.IsAbs(outDir) {
+			outDir, err = filepath.Abs(outDir)
+			if err != nil {
+				return errors.Wrap(err, "failed to get absolute path")
+			}
+		}
+	}
+
 	fmt.Printf("Dumping Prometheus data from %s to %s\n", endpoint, outDir)
 	fmt.Printf("Time range: %s to %s with step %s\n", start.Format(time.RFC3339), end.Format(time.RFC3339), step)
 
-	// digest
-	digest := sha256.New()
-	digest.Write([]byte(fmt.Sprintf("%s-%s-%s-%s-%s-%v-%d", endpoint, startStr, endStr, step, c.String("query"), c.Bool("plain"), parts)))
-	digestStr := hex.EncodeToString(digest.Sum(nil))[:8]
+	if parts == 1 { // output to a file
+		if err := os.MkdirAll(outDir, 0755); err != nil {
+			return errors.Wrap(err, "failed to create output directory")
+		}
+		outFile := filepath.Join(outDir, "promdump.ndjson")
+		if c.Bool("gzip") {
+			outFile += ".gz"
+		}
 
-	if parts == 1 { // output to a folder
-		outDir = filepath.Join(outDir, fmt.Sprintf("promdump_%s", digestStr))
+		// Create dump options
+		opt := &promdump.DumpOpt{
+			Endpoint:      endpoint,
+			Start:         start,
+			End:           end,
+			Step:          step,
+			QueryInterval: queryInterval,
+			Query:         c.String("query"),
+			Gzip:          c.Bool("gzip"),
+			MemoryRatio:   memoryRatio,
+		}
+
+		// Execute the dump
+		err = promdump.DumpPromToFile(context.Background(), opt, outFile, true)
+		if err != nil {
+			return errors.Wrap(err, "failed to dump prometheus data")
+		}
+		fmt.Printf("Successfully dumped prometheus data to %s\n", outFile)
+	} else { // output to a folder
 		if err := os.MkdirAll(outDir, 0755); err != nil {
 			return errors.Wrap(err, "failed to create output directory")
 		}
@@ -162,7 +195,15 @@ func runDump(c *cli.Context) error {
 				continue
 			}
 			// trim the .ndjson.gz suffix
-			part, err := strconv.Atoi(strings.TrimSuffix(file.Name(), ".ndjson.gz"))
+			part, err := strconv.Atoi(
+				strings.TrimSuffix(
+					strings.TrimSuffix(
+						file.Name(),
+						".gz",
+					),
+					".ndjson",
+				),
+			)
 			if err != nil {
 				continue
 			}
@@ -182,11 +223,14 @@ func runDump(c *cli.Context) error {
 		}
 
 		for i, timeRange := range timeRanges {
-			fmt.Printf("======Dumping part %d (%d/%d) %s to %s=======\n", i, i+1, parts, timeRange[0].Format(time.RFC3339), timeRange[1].Format(time.RFC3339))
+			fmt.Printf("Dumping part %d (%d/%d) %s to %s\n", i, i+1, parts, timeRange[0].Format(time.RFC3339), timeRange[1].Format(time.RFC3339))
 			if i < maxPart {
 				continue
 			}
-			outFile := filepath.Join(outDir, fmt.Sprintf("%d.ndjson.gz", i))
+			outFile := filepath.Join(outDir, fmt.Sprintf("%d.ndjson", i))
+			if c.Bool("gzip") {
+				outFile += ".gz"
+			}
 
 			// Create dump options
 			opt := &promdump.DumpOpt{
@@ -196,8 +240,8 @@ func runDump(c *cli.Context) error {
 				Step:          step,
 				QueryInterval: queryInterval,
 				Query:         c.String("query"),
-				Plain:         c.Bool("plain"),
-				QueryRatio:    memoryRatio,
+				Gzip:          c.Bool("gzip"),
+				MemoryRatio:   memoryRatio,
 			}
 
 			// Execute the dump
@@ -206,31 +250,6 @@ func runDump(c *cli.Context) error {
 				return errors.Wrap(err, "failed to dump prometheus data")
 			}
 		}
-	} else { // output to a file
-		if err := os.MkdirAll(outDir, 0755); err != nil {
-			return errors.Wrap(err, "failed to create output directory")
-		}
-		outFile := filepath.Join(outDir, fmt.Sprintf("promdump_%s.ndjson.gz", digestStr))
-
-		// Create dump options
-		opt := &promdump.DumpOpt{
-			Endpoint:      endpoint,
-			Start:         start,
-			End:           end,
-			Step:          step,
-			QueryInterval: queryInterval,
-			Query:         c.String("query"),
-			Plain:         c.Bool("plain"),
-			QueryRatio:    memoryRatio,
-		}
-
-		// Execute the dump
-		err = promdump.DumpPromToFile(context.Background(), opt, outFile, true)
-		if err != nil {
-			return errors.Wrap(err, "failed to dump prometheus data")
-		}
-
-		fmt.Printf("Successfully dumped prometheus data to %s\n", outFile)
 	}
 
 	return nil
