@@ -1,6 +1,6 @@
 services:
   vm:
-    image: victoriametrics/victoria-metrics
+    image: victoriametrics/victoria-metrics:v1.117.1
     ports:
       - 8428:8428
     volumes:

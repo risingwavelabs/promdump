@@ -41,7 +41,7 @@ Setup working dir
 ```shell
 curl https://raw.githubusercontent.com/risingwavelabs/promdump/refs/heads/main/examples/prompush/download.sh | sh
 cd prompush
-docker-compose up -d
+docker compose up -d
 ```
 
 Download prompush
