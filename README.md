@@ -78,7 +78,7 @@ Google Cloud Managed Prometheus does not support the `--query` option, so you ne
 
 2. Get all metrics names from the RisingWave instance you just run:
     ```shell
-    promdump list-metrics -e http://localhost:1250 > metrics.txt
+    promdump list-metrics --exporter http://localhost:1250 > metrics.txt
     ```
 
     This will create a file `metrics.txt` containing all metrics names. You can stop the RisingWave instance now.
