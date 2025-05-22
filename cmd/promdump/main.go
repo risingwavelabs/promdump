@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,65 +21,97 @@ import (
 
 func main() {
 	app := &cli.App{
-		Name:   "promdump",
-		Usage:  "Dump Prometheus data to a *.ndjson.gz file, and serve the file as a Prometheus remote_read endpoint",
-		Action: runDump,
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:    "out",
-				Aliases: []string{"o"},
-				Usage:   "Output directory",
-				Value:   ".",
+		Name:  "promdump",
+		Usage: "Dump Prometheus metrics to static files",
+		Commands: []*cli.Command{
+			{
+				Name:   "dump",
+				Usage:  "Dump Prometheus metrics to static files",
+				Action: runDump,
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:    "out",
+						Aliases: []string{"o"},
+						Usage:   "Output directory",
+						Value:   ".",
+					},
+					&cli.StringFlag{
+						Name:     "endpoint",
+						Aliases:  []string{"e"},
+						Usage:    "Prometheus endpoint URL",
+						Required: true,
+					},
+					&cli.StringFlag{
+						Name:  "start",
+						Usage: "Start time (RFC3339 format)",
+						Value: time.Now().Add(-7 * 24 * time.Hour).Format(time.RFC3339),
+					},
+					&cli.StringFlag{
+						Name:  "end",
+						Usage: "End time (RFC3339 format)",
+						Value: time.Now().Format(time.RFC3339),
+					},
+					&cli.DurationFlag{
+						Name:  "step",
+						Usage: "Format: 1s, 1m, 1h, 1d, default is 1s.",
+						Value: time.Second,
+					},
+					&cli.StringFlag{
+						Name: "query",
+						Usage: "PromQL query to filter time series, e.g. use {risingwave_cluster=\"default\"} " +
+							"to dump all time series with the label risingwave_cluster=default. " +
+							"If not provided, all time series will be dumped.",
+						Value: "",
+					},
+					&cli.StringFlag{
+						Name:  "metrics-names",
+						Usage: "A file containing a list of metrics to dump, each metric name on a new line",
+						Value: "",
+					},
+					&cli.BoolFlag{
+						Name:  "gzip",
+						Usage: "Output in compressed NDJSON format",
+						Value: false,
+					},
+					&cli.Float64Flag{
+						Name:  "query-ratio",
+						Usage: "(deprecated, use memory-ratio instead) (0, 1], if OOM, reduce the memory usage in Prometheus instance by this ratio",
+						Value: 0,
+					},
+					&cli.Float64Flag{
+						Name:  "memory-ratio",
+						Usage: "(0, 1], if OOM, reduce the memory usage in Prometheus instance by this ratio",
+						Value: 1,
+					},
+					&cli.IntFlag{
+						Name:    "parts",
+						Aliases: []string{"p"},
+						Usage:   "Divide query results into multiple parts. Useful for handling large datasets and resuming from the last completed part if interrupted.",
+						Value:   1,
+					},
+					&cli.DurationFlag{
+						Name:  "query-interval",
+						Usage: "Interval between consecutive queries",
+						Value: 0,
+					},
+				},
 			},
-			&cli.StringFlag{
-				Name:     "endpoint",
-				Aliases:  []string{"e"},
-				Usage:    "Prometheus endpoint URL",
-				Required: true,
+			{
+				Name:   "list-metrics",
+				Usage:  "List metrics exposed by a metrics exporter",
+				Action: runListMetrics,
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "exporter",
+						Usage:    "Exporter endpoint URL",
+						Required: true,
+					},
+				},
 			},
-			&cli.StringFlag{
-				Name:  "start",
-				Usage: "Start time (RFC3339 format)",
-				Value: time.Now().Add(-7 * 24 * time.Hour).Format(time.RFC3339),
-			},
-			&cli.StringFlag{
-				Name:  "end",
-				Usage: "End time (RFC3339 format)",
-				Value: time.Now().Format(time.RFC3339),
-			},
-			&cli.DurationFlag{
-				Name:  "step",
-				Usage: "Format: 1s, 1m, 1h, 1d, default is 1s.",
-				Value: time.Second,
-			},
-			&cli.StringFlag{
-				Name: "query",
-				Usage: "PromQL query to filter time series, e.g. use {risingwave_cluster=\"default\"} " +
-					"to dump all time series with the label risingwave_cluster=default. " +
-					"If not provided, all time series will be dumped.",
-				Value: "",
-			},
-			&cli.BoolFlag{
-				Name:  "gzip",
-				Usage: "Output in compressed NDJSON format",
-				Value: false,
-			},
-			&cli.Float64Flag{
-				Name:  "query-ratio",
-				Usage: "(deprecated, use memory-ratio instead) (0, 1], if OOM, reduce the memory usage in Prometheus instance by this ratio",
-				Value: 0,
-			},
-			&cli.Float64Flag{
-				Name:  "memory-ratio",
-				Usage: "(0, 1], if OOM, reduce the memory usage in Prometheus instance by this ratio",
-				Value: 1,
-			},
-			&cli.IntFlag{
-				Name:    "parts",
-				Aliases: []string{"p"},
-				Usage:   "Divide query results into multiple parts. Useful for handling large datasets and resuming from the last completed part if interrupted.",
-				Value:   1,
-			},
+		},
+		// Default action to show help if no command is provided
+		Action: func(c *cli.Context) error {
+			return cli.ShowAppHelp(c)
 		},
 	}
 
@@ -98,6 +132,15 @@ func runDump(c *cli.Context) error {
 	step := c.Duration("step")
 	queryInterval := c.Duration("query-interval")
 	parts := c.Int("parts")
+	metricsNamesPath := c.String("metrics-names")
+	var metricsNames []string
+	if metricsNamesPath != "" {
+		content, err := os.ReadFile(metricsNamesPath)
+		if err != nil {
+			return errors.Wrap(err, "failed to read metrics names file")
+		}
+		metricsNames = strings.Split(string(content), "\n")
+	}
 
 	if parts < 1 {
 		return fmt.Errorf("parts must be greater than 0")
@@ -171,6 +214,7 @@ func runDump(c *cli.Context) error {
 			Step:          step,
 			QueryInterval: queryInterval,
 			Query:         c.String("query"),
+			MetricsNames:  metricsNames,
 			Gzip:          c.Bool("gzip"),
 			MemoryRatio:   memoryRatio,
 		}
@@ -241,6 +285,7 @@ func runDump(c *cli.Context) error {
 				QueryInterval: queryInterval,
 				Query:         c.String("query"),
 				Gzip:          c.Bool("gzip"),
+				MetricsNames:  metricsNames,
 				MemoryRatio:   memoryRatio,
 			}
 
@@ -252,5 +297,57 @@ func runDump(c *cli.Context) error {
 		}
 	}
 
+	return nil
+}
+
+func runListMetrics(c *cli.Context) error {
+	exporter := c.String("exporter")
+	if exporter == "" {
+		return fmt.Errorf("exporter endpoint is required. e.g. http://localhost:1250")
+	}
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(c.Context, http.MethodGet, exporter, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to query Prometheus: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("got non-200 status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	metricsNameSet := make(map[string]struct{})
+
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Extract the metric name (everything before the first space or curly brace)
+		metricName := line
+		if idx := strings.IndexAny(line, " {"); idx > 0 {
+			metricName = line[:idx]
+		}
+		metricsNameSet[metricName] = struct{}{}
+	}
+
+	for metricName := range metricsNameSet {
+		fmt.Println(metricName)
+	}
 	return nil
 }

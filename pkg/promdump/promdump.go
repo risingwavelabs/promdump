@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -25,6 +26,7 @@ type DumpOpt struct {
 	Step          time.Duration
 	QueryInterval time.Duration
 	Query         string
+	MetricsNames  []string
 	Gzip          bool
 	MemoryRatio   float64
 }
@@ -122,6 +124,15 @@ func dump(ctx context.Context, opt *DumpOpt, cb QueryCallback) error {
 	var queries []string
 	if len(opt.Query) > 0 {
 		queries = []string{opt.Query}
+	} else if len(opt.MetricsNames) > 0 {
+		fmt.Println("metrics names", opt.MetricsNames)
+		for _, metric := range opt.MetricsNames {
+			metricName := strings.TrimSpace(metric)
+			if metricName == "" {
+				continue
+			}
+			queries = append(queries, metricName)
+		}
 	} else { // get all metric names
 		labelValues, warnings, err := v1api.LabelValues(ctx, "__name__", []string{}, opt.Start, opt.End)
 		if err != nil {
