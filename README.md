@@ -64,26 +64,31 @@ Then open [http://localhost:3001](http://localhost:3001)
 
 `prompush` import the metrics to the VictoriMetrics.
 
-## Promdump for Google Cloud Managed Prometheus
+## Troubleshooting
 
-Google Cloud Managed Prometheus does not support the `--query` option, so you need to specify the metrics names in a file.
+### Promdump for Google Cloud Managed Prometheus
 
-1. To get all metrics exposed by RisingWave, run RisingWave locally with the following command (replace `latest` by your desired version):
+Google Cloud Managed Prometheus does not support the `--query` option. Instead, you must specify metric names in a file.
+
+1. To obtain all metrics names in RisingWave, run a local RisingWave instance using the following command (replace `latest` with your desired version):
 
     ```shell
     docker run --rm -p 4566:4566 -p 1250:1250 --entrypoint /risingwave/bin/risingwave risingwavelabs/risingwave:latest standalone --meta-opts="--listen-addr 0.0.0.0:5690 --advertise-addr localhost:5690 --dashboard-host 0.0.0.0:5691 --prometheus-host 0.0.0.0:1250 --backend sqlite  --sql-endpoint /root/single_node.db --state-store hummock+fs:///root/state_store --data-directory hummock_001" --compute-opts="--listen-addr 0.0.0.0:5688 --prometheus-listener-addr 0.0.0.0:1250 --advertise-addr localhost:5688 --async-stack-trace verbose --parallelism 4 --total-memory-bytes 2147483648 --role both --meta-address http://0.0.0.0:5690" --frontend-opts="--listen-addr 0.0.0.0:4566 --advertise-addr localhost:4566 --prometheus-listener-addr 0.0.0.0:1250 --health-check-listener-addr 0.0.0.0:6786 --meta-addr http://0.0.0.0:5690 --frontend-total-memory-bytes=500000000" --compactor-opts=" --listen-addr 0.0.0.0:6660 --prometheus-listener-addr 0.0.0.0:1250 --advertise-addr localhost:6660 --meta-address http://0.0.0.0:5690 --compactor-total-memory-bytes=1000000000"
     ```
 
-    Since the default standalone mode does not expose the prometheus listener address, we need to specify all options in the command.
+    The default standalone mode doesn't expose Prometheus metrics, so we need to explicitly configure all components with their Prometheus listener addresses.
 
 2. Get all metrics names from the RisingWave instance you just run:
     ```shell
     promdump list-metrics --exporter http://localhost:1250 > metrics.txt
     ```
-
-    This will create a file `metrics.txt` containing all metrics names. You can stop the RisingWave instance now.
+    This will generate a file `metrics.txt` containing all metric names. You can now stop the RisingWave instance.
 
 3. Run PromDump:
     ```shell
     promdump dump -e <your GMP endpoint> --metrics-names metrics.txt --gzip
     ```
+
+### No Data in Grafana
+
+Check the Docker Compose logs for any errors in the VictoriaMetrics container. If there are errors related to vmimport, try using the `--use-legacy-format` flag with prompush.
