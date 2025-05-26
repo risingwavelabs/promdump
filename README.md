@@ -92,3 +92,10 @@ Google Cloud Managed Prometheus does not support the `--query` option. Instead, 
 ### No Data in Grafana
 
 Check the Docker Compose logs for any errors in the VictoriaMetrics container. If there are errors related to vmimport, try using the `--use-legacy-format` flag with prompush.
+
+
+### Prometheus: query processing would load too many samples into memory in query execution
+If you encounter this error, reduce memory usage by setting `--memory-ratio` to a value less than 1. For example, `--memory-ratio 0.5` will halve the memory consumption.
+If the issue persists, try progressively smaller values.
+
+For cases where even very small memory ratios don't resolve the issue, use `--parts` to divide the query results into multiple smaller chunks. This also enable resuming from the last completed part if the dump is interrupted.
