@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -170,10 +171,17 @@ func runPush(c *cli.Context) error {
 			for _, v := range legacy.Values {
 				val, err := strconv.ParseFloat(v[1].(string), 64)
 				if err != nil {
-					return fmt.Errorf("failed to parse timestamp: %w", err)
+					return fmt.Errorf("failed to parse value: %w", err)
+				}
+				if math.IsNaN(val) {
+					continue
 				}
 				item.Timestamps = append(item.Timestamps, int64(1000*v[0].(float64)))
 				item.Values = append(item.Values, val)
+			}
+			if len(item.Timestamps) == 0 {
+				fmt.Printf("\nskipping line: %v\n", utils.TruncateString(string(line), 100))
+				continue
 			}
 			l, err := json.Marshal(item)
 			if err != nil {

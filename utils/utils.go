@@ -24,3 +24,7 @@ func RenderProgressBar(progress float64) string {
 	// Return the combined progress string with percentage
 	return fmt.Sprintf("%s %.2f%%", progressBar, progress*100)
 }
+
+func TruncateString(val string, limit int) string {
+	return val[:limit] + "..."
+}

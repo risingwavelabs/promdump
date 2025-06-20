@@ -1,6 +1,6 @@
 mkdir -p prompush/dashboards
 
-URL_BASE="https://raw.githubusercontent.com/risingwavelabs/wavekit-lite/refs/heads/main/examples/prompush"
+URL_BASE="https://raw.githubusercontent.com/risingwavelabs/promdump/refs/heads/main/examples/prompush"
 
 curl -L $URL_BASE/docker-compose.yaml -o prompush/docker-compose.yaml
 curl -L $URL_BASE/grafana-risedev-dashboard.yml -o prompush/grafana-risedev-dashboard.yml
