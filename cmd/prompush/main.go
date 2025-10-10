@@ -162,7 +162,7 @@ func runPush(c *cli.Context) error {
 
 			var legacy LegacyFormat
 			if err := json.Unmarshal(line, &legacy); err != nil {
-				return fmt.Errorf("failed to unmarshal line: %w", err)
+				return fmt.Errorf("failed to unmarshal line: %w, line=%s", err, string(line))
 			}
 			item := Item{
 				Metric: legacy.Metric,
