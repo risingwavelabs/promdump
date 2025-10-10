@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/risingwavelabs/promdump/pkg"
 	"github.com/risingwavelabs/promdump/pkg/promdump"
 	"github.com/urfave/cli/v2"
 )
@@ -24,6 +25,14 @@ func main() {
 		Name:  "promdump",
 		Usage: "Dump Prometheus metrics to static files",
 		Commands: []*cli.Command{
+			{
+				Name:  "version",
+				Usage: "Show the version of promdump",
+				Action: func(c *cli.Context) error {
+					fmt.Println(pkg.Version)
+					return nil
+				},
+			},
 			{
 				Name:   "dump",
 				Usage:  "Dump Prometheus metrics to static files",
