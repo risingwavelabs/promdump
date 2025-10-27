@@ -28,12 +28,12 @@ type DumpOpt struct {
 	Query         string
 	MetricsNames  []string
 	Gzip          bool
-	MemoryRatio   float64
+	MemoryRatio   float32
 }
 
 func DumpPromToFile(ctx context.Context, opt *DumpOpt, filename string, showProgress bool) error {
-	var lastProgress float64
-	if err := DumpPromToFileWithCallback(ctx, opt, filename, func(query string, value prom_model.Matrix, progress float64) error {
+	var lastProgress float32
+	if err := DumpPromToFileWithCallback(ctx, opt, filename, func(query string, value prom_model.Matrix, progress float32) error {
 		if showProgress {
 			if progress-lastProgress > 0.01 {
 				// Clear the line and print the progress bar with percentage
@@ -73,9 +73,14 @@ func Dump(ctx context.Context, opt *DumpOpt, writer io.Writer, cb QueryCallback)
 	}
 
 	isFirstItem := true
-	if err := dump(ctx, opt, func(query string, value prom_model.Matrix, progress float64) error {
+	if err := dump(ctx, opt, func(query string, value prom_model.Matrix, progress float32) error {
+		write := func(p []byte) error {
+			_, err := w.Write(p)
+			return err
+		}
+
 		if !isFirstItem {
-			if _, err := w.Write([]byte("\n")); err != nil {
+			if err := write([]byte("\n")); err != nil {
 				return errors.Wrapf(err, "failed to write comma")
 			}
 		} else {
@@ -90,11 +95,11 @@ func Dump(ctx context.Context, opt *DumpOpt, writer io.Writer, cb QueryCallback)
 			if len(raw) == 0 {
 				continue
 			}
-			if _, err := w.Write(raw); err != nil {
+			if err := write(raw); err != nil {
 				return errors.Wrapf(err, "failed to write value")
 			}
 			if i < len(value)-1 {
-				if _, err := w.Write([]byte("\n")); err != nil {
+				if err := write([]byte("\n")); err != nil {
 					return errors.Wrapf(err, "failed to write newline")
 				}
 			}
@@ -112,7 +117,7 @@ func Dump(ctx context.Context, opt *DumpOpt, writer io.Writer, cb QueryCallback)
 	return nil
 }
 
-type QueryCallback func(query string, value prom_model.Matrix, progress float64) error
+type QueryCallback func(query string, value prom_model.Matrix, progress float32) error
 
 func dump(ctx context.Context, opt *DumpOpt, cb QueryCallback) error {
 	client, err := api.NewClient(api.Config{
@@ -168,8 +173,8 @@ func dump(ctx context.Context, opt *DumpOpt, cb QueryCallback) error {
 			if !ok {
 				return errors.New("value is not a matrix")
 			}
-			progress := float64(qi+1)/float64(len(queries)) +
-				float64(vi+1)/float64(len(vs))*(1/float64(len(queries)))
+			progress := float32(qi+1)/float32(len(queries)) +
+				float32(vi+1)/float32(len(vs))*(1/float32(len(queries)))
 			if cb != nil {
 				if err := cb(string(query), matrix, progress); err != nil {
 					return errors.Wrapf(err, "failed to run callback")

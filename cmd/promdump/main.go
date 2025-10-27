@@ -156,12 +156,12 @@ func runDump(c *cli.Context) error {
 	}
 
 	// Parse memory-ratio
-	var memoryRatio float64
-	queryRatio := c.Float64("query-ratio")
+	var memoryRatio float32
+	queryRatio := float32(c.Float64("query-ratio"))
 	if queryRatio > 0 { // use query-ratio for compatibility
 		memoryRatio = queryRatio
 	} else { // use memory-ratio
-		memoryRatio = c.Float64("memory-ratio")
+		memoryRatio = float32(c.Float64("memory-ratio"))
 		if memoryRatio < 0 || memoryRatio > 1 {
 			return fmt.Errorf("memory-ratio must be between 0 and 1")
 		}

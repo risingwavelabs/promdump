@@ -4,9 +4,9 @@ import "fmt"
 
 // renderProgressBar generates a string representation of a progress bar
 // based on the given progress percentage (0.0 to 1.0)
-func RenderProgressBar(progress float64) string {
+func RenderProgressBar(progress float32) string {
 	barWidth := 40
-	completedWidth := int(float64(barWidth) * progress)
+	completedWidth := int(float32(barWidth) * progress)
 
 	// Build the progress bar string
 	progressBar := "["

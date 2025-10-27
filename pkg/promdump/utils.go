@@ -8,8 +8,8 @@ type TimeRange struct {
 }
 
 // calTimeRanges calculates the time ranges for the given start and end time
-func calTimeRanges(start time.Time, end time.Time, step time.Duration, memoryRatio float64) []TimeRange {
-	maxDuration := time.Duration(float64(PrometheusDefaultMaxResolution)*memoryRatio) * step
+func calTimeRanges(start time.Time, end time.Time, step time.Duration, memoryRatio float32) []TimeRange {
+	maxDuration := time.Duration(float32(PrometheusDefaultMaxResolution)*memoryRatio) * step
 	chunks := []TimeRange{}
 	for {
 		d := end.Sub(start)
