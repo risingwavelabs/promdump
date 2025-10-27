@@ -59,13 +59,17 @@ func DumpPromToFileWithCallback(ctx context.Context, opt *DumpOpt, filename stri
 	}
 	defer f.Close()
 
+	return Dump(ctx, opt, f, cb)
+}
+
+func Dump(ctx context.Context, opt *DumpOpt, writer io.Writer, cb QueryCallback) error {
 	var w io.Writer
 	if opt.Gzip {
-		gw := gzip.NewWriter(f)
+		gw := gzip.NewWriter(writer)
 		defer gw.Close()
 		w = gw
 	} else {
-		w = f
+		w = writer
 	}
 
 	isFirstItem := true
