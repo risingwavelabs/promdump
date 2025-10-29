@@ -14,55 +14,32 @@ import (
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	prom_model "github.com/prometheus/common/model"
-	"github.com/risingwavelabs/promdump/utils"
 )
 
 const PrometheusDefaultMaxResolution = 11_000
 
 type DumpOpt struct {
-	Endpoint      string
-	Start         time.Time
-	End           time.Time
-	Step          time.Duration
-	QueryInterval time.Duration
-	Query         string
-	MetricsNames  []string
-	Gzip          bool
-	MemoryRatio   float32
+	Endpoint     string
+	Start        time.Time
+	End          time.Time
+	Step         time.Duration
+	Query        string
+	MetricsNames []string
+	Gzip         bool
+	MemoryRatio  float32
 }
 
-func DumpPromToFile(ctx context.Context, opt *DumpOpt, filename string, showProgress bool) error {
-	var lastProgress float32
-	if err := DumpPromToFileWithCallback(ctx, opt, filename, func(query string, value prom_model.Matrix, progress float32) error {
-		if showProgress {
-			if progress-lastProgress > 0.01 {
-				// Clear the line and print the progress bar with percentage
-				fmt.Printf("\033[2K\rprogress: %s", utils.RenderProgressBar(progress))
-				lastProgress = progress
-			}
-		}
-		return nil
-	}); err != nil {
-		fmt.Println()
-		return errors.Wrapf(err, "failed to dump")
-	}
-
-	// Clear the line and print final progress
-	fmt.Printf("\033[2K\rprogress: %s\n", utils.RenderProgressBar(1.0))
-	return nil
-}
-
-func DumpPromToFileWithCallback(ctx context.Context, opt *DumpOpt, filename string, cb QueryCallback) error {
+func DumpToFileWithCallback(ctx context.Context, opt *DumpOpt, filename string, cb QueryCallback) error {
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return errors.Wrapf(err, "failed to open file")
 	}
 	defer f.Close()
 
-	return Dump(ctx, opt, f, cb)
+	return DumpToWriter(ctx, opt, f, cb)
 }
 
-func Dump(ctx context.Context, opt *DumpOpt, writer io.Writer, cb QueryCallback) error {
+func DumpToWriter(ctx context.Context, opt *DumpOpt, writer io.Writer, cb QueryCallback) error {
 	var w io.Writer
 	if opt.Gzip {
 		gw := gzip.NewWriter(writer)
