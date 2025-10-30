@@ -73,6 +73,11 @@ func main() {
 						Usage: "A file containing a list of metrics to dump, each metric name on a new line",
 						Value: "",
 					},
+					&cli.StringFlag{
+						Name:  "use-preset-metrics-names",
+						Usage: "Use preset metrics names list. Options: 'default' or the corresponding version of RisingWave",
+						Value: "",
+					},
 					&cli.BoolFlag{
 						Name:  "gzip",
 						Usage: "Output in compressed NDJSON format",
@@ -132,6 +137,11 @@ func runDump(c *cli.Context) error {
 	step := c.Duration("step")
 	parts := c.Int("parts")
 	metricsNamesPath := c.String("metrics-names")
+	useMetricsNamesPreset := c.String("use-preset-metrics-names")
+	if useMetricsNamesPreset != "" && metricsNamesPath != "" {
+		return fmt.Errorf("cannot use both --metrics-names and --use-preset-metrics-names")
+	}
+
 	var metricsNames []string
 	if metricsNamesPath != "" {
 		content, err := os.ReadFile(metricsNamesPath)
@@ -184,6 +194,12 @@ func runDump(c *cli.Context) error {
 			Parts:     parts,
 			OutputDir: c.String("out"),
 			Verbose:   true,
+			MetricsNamesPreset: func() *string {
+				if useMetricsNamesPreset == "" {
+					return nil
+				}
+				return &useMetricsNamesPreset
+			}(),
 		},
 		func(curr, total int, progress float32) error {
 			fmt.Printf("\033[2K\r[%d/%d] progress: %s", curr, total, utils.RenderProgressBar(progress))

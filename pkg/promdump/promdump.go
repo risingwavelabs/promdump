@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -99,6 +100,7 @@ type QueryCallback func(query string, value prom_model.Matrix, progress float32)
 func dump(ctx context.Context, opt *DumpOpt, cb QueryCallback) error {
 	client, err := api.NewClient(api.Config{
 		Address: opt.Endpoint,
+		Client:  &http.Client{},
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to create prometheus client")
