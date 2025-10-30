@@ -70,6 +70,14 @@ Then open [http://localhost:3001](http://localhost:3001)
 
 Google Cloud Managed Prometheus does not support the `--query` option. Instead, you must specify metric names in a file.
 
+Promdump have embeded some metrics name files, add `--use-preset-metrics-names default`, this will import [the metrics names preset here](https://github.com/risingwavelabs/promdump/tree/main/static). For example:
+
+```shell
+promdump dump -e <your GMP endpoint> --use-preset-metrics-names default
+```
+
+If these preset files does not contain the metrics name you need, please follow the following instruction to fetch the metrics names file of your RisingWave cluster:
+
 1. To obtain all metrics names in RisingWave, run a local RisingWave instance using the following command (replace `latest` with your desired version):
 
     ```shell
