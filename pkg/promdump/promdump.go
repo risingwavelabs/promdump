@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -14,64 +15,50 @@ import (
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	prom_model "github.com/prometheus/common/model"
-	"github.com/risingwavelabs/promdump/utils"
 )
 
 const PrometheusDefaultMaxResolution = 11_000
 
 type DumpOpt struct {
-	Endpoint      string
-	Start         time.Time
-	End           time.Time
-	Step          time.Duration
-	QueryInterval time.Duration
-	Query         string
-	MetricsNames  []string
-	Gzip          bool
-	MemoryRatio   float64
+	Endpoint     string
+	Start        time.Time
+	End          time.Time
+	Step         time.Duration
+	Query        string
+	MetricsNames []string
+	Gzip         bool
+	MemoryRatio  float32
 }
 
-func DumpPromToFile(ctx context.Context, opt *DumpOpt, filename string, showProgress bool) error {
-	var lastProgress float64
-	if err := DumpPromToFileWithCallback(ctx, opt, filename, func(query string, value prom_model.Matrix, progress float64) error {
-		if showProgress {
-			if progress-lastProgress > 0.01 {
-				// Clear the line and print the progress bar with percentage
-				fmt.Printf("\033[2K\rprogress: %s", utils.RenderProgressBar(progress))
-				lastProgress = progress
-			}
-		}
-		return nil
-	}); err != nil {
-		fmt.Println()
-		return errors.Wrapf(err, "failed to dump")
-	}
-
-	// Clear the line and print final progress
-	fmt.Printf("\033[2K\rprogress: %s\n", utils.RenderProgressBar(1.0))
-	return nil
-}
-
-func DumpPromToFileWithCallback(ctx context.Context, opt *DumpOpt, filename string, cb QueryCallback) error {
+func DumpToFileWithCallback(ctx context.Context, opt *DumpOpt, filename string, cb QueryCallback) error {
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return errors.Wrapf(err, "failed to open file")
 	}
 	defer f.Close()
 
+	return DumpToWriter(ctx, opt, f, cb)
+}
+
+func DumpToWriter(ctx context.Context, opt *DumpOpt, writer io.Writer, cb QueryCallback) error {
 	var w io.Writer
 	if opt.Gzip {
-		gw := gzip.NewWriter(f)
+		gw := gzip.NewWriter(writer)
 		defer gw.Close()
 		w = gw
 	} else {
-		w = f
+		w = writer
 	}
 
 	isFirstItem := true
-	if err := dump(ctx, opt, func(query string, value prom_model.Matrix, progress float64) error {
+	if err := dump(ctx, opt, func(query string, value prom_model.Matrix, progress float32) error {
+		write := func(p []byte) error {
+			_, err := w.Write(p)
+			return err
+		}
+
 		if !isFirstItem {
-			if _, err := w.Write([]byte("\n")); err != nil {
+			if err := write([]byte("\n")); err != nil {
 				return errors.Wrapf(err, "failed to write comma")
 			}
 		} else {
@@ -86,11 +73,11 @@ func DumpPromToFileWithCallback(ctx context.Context, opt *DumpOpt, filename stri
 			if len(raw) == 0 {
 				continue
 			}
-			if _, err := w.Write(raw); err != nil {
+			if err := write(raw); err != nil {
 				return errors.Wrapf(err, "failed to write value")
 			}
 			if i < len(value)-1 {
-				if _, err := w.Write([]byte("\n")); err != nil {
+				if err := write([]byte("\n")); err != nil {
 					return errors.Wrapf(err, "failed to write newline")
 				}
 			}
@@ -108,11 +95,12 @@ func DumpPromToFileWithCallback(ctx context.Context, opt *DumpOpt, filename stri
 	return nil
 }
 
-type QueryCallback func(query string, value prom_model.Matrix, progress float64) error
+type QueryCallback func(query string, value prom_model.Matrix, progress float32) error
 
 func dump(ctx context.Context, opt *DumpOpt, cb QueryCallback) error {
 	client, err := api.NewClient(api.Config{
 		Address: opt.Endpoint,
+		Client:  &http.Client{},
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to create prometheus client")
@@ -164,8 +152,8 @@ func dump(ctx context.Context, opt *DumpOpt, cb QueryCallback) error {
 			if !ok {
 				return errors.New("value is not a matrix")
 			}
-			progress := float64(qi+1)/float64(len(queries)) +
-				float64(vi+1)/float64(len(vs))*(1/float64(len(queries)))
+			progress := float32(qi+1)/float32(len(queries)) +
+				float32(vi+1)/float32(len(vs))*(1/float32(len(queries)))
 			if cb != nil {
 				if err := cb(string(query), matrix, progress); err != nil {
 					return errors.Wrapf(err, "failed to run callback")

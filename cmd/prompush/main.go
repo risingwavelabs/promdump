@@ -150,7 +150,7 @@ func runPush(c *cli.Context) error {
 			}
 
 			// Display progress based on compressed file position
-			fmt.Printf("\033[2K\rprogress: %s", utils.RenderProgressBar(float64(currentPos)/float64(fileSize)))
+			fmt.Printf("\033[2K\rprogress: %s", utils.RenderProgressBar(float32(currentPos)/float32(fileSize)))
 
 			if len(line) == 0 {
 				continue
