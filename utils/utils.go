@@ -26,5 +26,8 @@ func RenderProgressBar(progress float32) string {
 }
 
 func TruncateString(val string, limit int) string {
+	if len(val) <= limit {
+		return val
+	}
 	return val[:limit] + "..."
 }
