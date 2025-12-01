@@ -2,11 +2,8 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -69,13 +66,8 @@ func main() {
 						Value: "",
 					},
 					&cli.StringFlag{
-						Name:  "metrics-names",
-						Usage: "A file containing a list of metrics to dump, each metric name on a new line",
-						Value: "",
-					},
-					&cli.StringFlag{
-						Name:  "use-preset-metrics-names",
-						Usage: "Use preset metrics names list. Options: 'default' or the corresponding version of RisingWave",
+						Name:  "grafana-dashboard",
+						Usage: "Retrieve metrics names from risingwave official grafana dashboard. If this is set, no need to use --query. This can be the path to a grafana dashboard file, or just the version of RisingWave. If the version is provided, promdump will read the grafana dashboard in the Github repository",
 						Value: "",
 					},
 					&cli.BoolFlag{
@@ -103,13 +95,13 @@ func main() {
 			},
 			{
 				Name:   "list-metrics",
-				Usage:  "List metrics exposed by a metrics exporter",
+				Usage:  "List all metrics names in RisingWave",
 				Action: runListMetrics,
 				Flags: []cli.Flag{
 					&cli.StringFlag{
-						Name:     "exporter",
-						Usage:    "Exporter endpoint URL",
-						Required: true,
+						Name:  "grafana-dashboard",
+						Usage: "Retrieve metrics names from risingwave official grafana dashboard. This can be the path to a grafana dashboard file, or just the version of RisingWave. If the version is provided, promdump will read the grafana dashboard in the Github repository",
+						Value: "",
 					},
 				},
 			},
@@ -136,19 +128,19 @@ func runDump(c *cli.Context) error {
 	endStr := c.String("end")
 	step := c.Duration("step")
 	parts := c.Int("parts")
-	metricsNamesPath := c.String("metrics-names")
-	useMetricsNamesPreset := c.String("use-preset-metrics-names")
-	if useMetricsNamesPreset != "" && metricsNamesPath != "" {
-		return fmt.Errorf("cannot use both --metrics-names and --use-preset-metrics-names")
-	}
+	dashboard := c.String("grafana-dashboard")
 
-	var metricsNames []string
-	if metricsNamesPath != "" {
-		content, err := os.ReadFile(metricsNamesPath)
+	var (
+		metricsNames []string
+		err          error
+	)
+	if dashboard != "" {
+		parser := promdump.NewGrafanaDashboardParser()
+		metricsNames, err = parser.Parse(dashboard)
 		if err != nil {
-			return errors.Wrap(err, "failed to read metrics names file")
+			return errors.Wrap(err, "failed to parse grafana dashboard")
 		}
-		metricsNames = strings.Split(string(content), "\n")
+		fmt.Printf("Retrieved %d metrics names from grafana dashboard\n", len(metricsNames))
 	}
 
 	if parts < 1 {
@@ -194,12 +186,6 @@ func runDump(c *cli.Context) error {
 			Parts:     parts,
 			OutputDir: c.String("out"),
 			Verbose:   true,
-			MetricsNamesPreset: func() *string {
-				if useMetricsNamesPreset == "" {
-					return nil
-				}
-				return &useMetricsNamesPreset
-			}(),
 		},
 		func(curr, total int, progress float32) error {
 			fmt.Printf("\033[2K\r[%d/%d] progress: %s", curr, total, utils.RenderProgressBar(progress))
@@ -209,52 +195,18 @@ func runDump(c *cli.Context) error {
 }
 
 func runListMetrics(c *cli.Context) error {
-	exporter := c.String("exporter")
-	if exporter == "" {
-		return fmt.Errorf("exporter endpoint is required. e.g. http://localhost:1250")
+	dashboard := c.String("grafana-dashboard")
+	if dashboard == "" {
+		return errors.New("dashboard is required. It can be the path to a grafana dashboard file, or just the version of RisingWave.")
 	}
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	req, err := http.NewRequestWithContext(c.Context, http.MethodGet, exporter, nil)
+	parser := promdump.NewGrafanaDashboardParser()
+	metrics, err := parser.Parse(dashboard)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return errors.Wrap(err, "failed to parse grafana dashboard")
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to query Prometheus: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("got non-200 status: %d, body: %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	metricsNameSet := make(map[string]struct{})
-
-	for _, line := range strings.Split(string(body), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		// Extract the metric name (everything before the first space or curly brace)
-		metricName := line
-		if idx := strings.IndexAny(line, " {"); idx > 0 {
-			metricName = line[:idx]
-		}
-		metricsNameSet[metricName] = struct{}{}
-	}
-
-	for metricName := range metricsNameSet {
+	for _, metricName := range metrics {
 		fmt.Println(metricName)
 	}
 	return nil

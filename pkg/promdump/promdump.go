@@ -113,7 +113,7 @@ func dump(ctx context.Context, opt *DumpOpt, cb QueryCallback) error {
 	if len(opt.Query) > 0 {
 		queries = []string{opt.Query}
 	} else if len(opt.MetricsNames) > 0 {
-		fmt.Println("metrics names", opt.MetricsNames)
+		fmt.Printf("Fetching with %d metrics names\n", len(opt.MetricsNames))
 		for _, metric := range opt.MetricsNames {
 			metricName := strings.TrimSpace(metric)
 			if metricName == "" {
@@ -122,6 +122,7 @@ func dump(ctx context.Context, opt *DumpOpt, cb QueryCallback) error {
 			queries = append(queries, metricName)
 		}
 	} else { // get all metric names
+		fmt.Println("Fetching all metric names from prometheus...")
 		labelValues, warnings, err := v1api.LabelValues(ctx, "__name__", []string{}, opt.Start, opt.End)
 		if err != nil {
 			return errors.Wrapf(err, "failed to get label values")

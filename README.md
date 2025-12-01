@@ -16,13 +16,27 @@ GOBIN=$(pwd) go install github.com/risingwavelabs/promdump/cmd/promdump@latest
 ```
 
 ### 2. Dump all metrics to a file
+
 ```shell
 ./promdump dump -e http://localhost:9500 --gizp
 ```
 This will dump **ALL metrics** to a single file. Note that you can also specify the time range, and filters.  For example, to get time series with label `namespace="risingwave"`:
+
 ```shell
 ./promdump dump -e http://localhost:9500 --query '{namespace="risingwave"}' --gizp
 ```
+
+Or use `--grafana-dashboard <file path or version>` to retrieve all metrics names needed from a Grafana dashboard, then use those metrics names to dump metrics:
+
+```shell
+./promdump dump -e http://localhost:9500 --grafana-dashboard v2.6.2
+```
+
+If you don't have internet access, you can also download the dashboard in the [offical Github repository](https://github.com/risingwavelabs/risingwave/blob/main/grafana/risingwave-user-dashboard.json) then run:
+
+```shell
+promdump dump -e http://localhost:9500 --grafana-dashboard /path/to/risingwave-user-dashboard.json
+``` 
 
 > Note: The `--query` option is not supported by Google Cloud Managed Prometheus, please check [Promdump for Google Cloud Managed Prometheus](#promdump-for-google-cloud-managed-prometheus) for more details.
 
@@ -70,41 +84,27 @@ Then open [http://localhost:3001](http://localhost:3001)
 As AMP doesn't support direct API access (need complex authentication with AK/SK involved), Promdump currectly does not support to connect the AMP Prometheus-compatible APIs directly. 
 Please follow [this documentation](https://docs.aws.amazon.com/prometheus/latest/userguide/AMP-compatible-APIs.html) to expose all RisingWave related metrics. Make sure the result type is `matrix`, and each file can only contain one query response.
 
-### Promdump for Google Cloud Managed Prometheus
-
-Google Cloud Managed Prometheus does not support the `--query` option. Instead, you must specify metric names in a file.
-
-Promdump have embeded some metrics name files, add `--use-preset-metrics-names default`, this will import [the metrics names preset here](https://github.com/risingwavelabs/promdump/tree/main/static). For example:
+If you need to list all metrics names of RisingWave, run `promdump list-metrics --grafana-dashboard <version> > metrics.txt`. For example: 
 
 ```shell
-promdump dump -e <your GMP endpoint> --use-preset-metrics-names default
-```
+promdump list-metrics --grafana-dashboard v2.6.2 > metrics.txt
+``` 
 
-If these preset files does not contain the metrics name you need, please follow the following instruction to fetch the metrics names file of your RisingWave cluster:
+If you don't have internet access, you can also download the dashboard in the [offical Github repository](https://github.com/risingwavelabs/risingwave/blob/main/grafana/risingwave-user-dashboard.json) then run:
 
-1. To obtain all metrics names in RisingWave, run a local RisingWave instance using the following command (replace `latest` with your desired version):
+```shell
+promdump list-metrics --grafana-dashboard /path/to/risingwave-user-dashboard.json > metrics.txt
+``` 
 
-    ```shell
-    docker run --rm -p 4566:4566 -p 1250:1250 --entrypoint /risingwave/bin/risingwave risingwavelabs/risingwave:latest standalone --meta-opts="--listen-addr 0.0.0.0:5690 --advertise-addr localhost:5690 --dashboard-host 0.0.0.0:5691 --prometheus-host 0.0.0.0:1250 --backend sqlite  --sql-endpoint /root/single_node.db --state-store hummock+fs:///root/state_store --data-directory hummock_001" --compute-opts="--listen-addr 0.0.0.0:5688 --prometheus-listener-addr 0.0.0.0:1250 --advertise-addr localhost:5688 --async-stack-trace verbose --parallelism 4 --total-memory-bytes 2147483648 --role both --meta-address http://0.0.0.0:5690" --frontend-opts="--listen-addr 0.0.0.0:4566 --advertise-addr localhost:4566 --prometheus-listener-addr 0.0.0.0:1250 --health-check-listener-addr 0.0.0.0:6786 --meta-addr http://0.0.0.0:5690 --frontend-total-memory-bytes=500000000" --compactor-opts=" --listen-addr 0.0.0.0:6660 --prometheus-listener-addr 0.0.0.0:1250 --advertise-addr localhost:6660 --meta-address http://0.0.0.0:5690 --compactor-total-memory-bytes=1000000000"
-    ```
+### Promdump for Google Cloud Managed Prometheus
 
-    The default standalone mode doesn't expose Prometheus metrics, so we need to explicitly configure all components with their Prometheus listener addresses.
+Google Cloud Managed Prometheus does not support the `--query` option. Please use `--grafana-dashboard <file path or version>` argument in the Promdump CLI. Promdump will parse the grafana dashboard and get all metrics names. Then use those metrics names to construt query. 
 
-2. Get all metrics names from the RisingWave instance you just run:
-    ```shell
-    promdump list-metrics --exporter http://localhost:1250 > metrics.txt
-    ```
-    This will generate a file `metrics.txt` containing all metric names. You can now stop the RisingWave instance.
-
-3. Run PromDump:
-    ```shell
-    promdump dump -e <your GMP endpoint> --metrics-names metrics.txt --gzip
-    ```
+If your environment have internet access, you can put the RisingWave version like `--grafana-dashboard v2.6.2`. Promdump will automatically fetch RisingWave dashboard from the RisingWave Github repository.
 
 ### No Data in Grafana
 
-Check the Docker Compose logs for any errors in the VictoriaMetrics container. If there are errors related to vmimport, try using the `--use-legacy-format` flag with prompush.
-
+Check if the metrics needed by dashboard variables exist. Also check if there are any error logs in the VictoriaMetrics service.
 
 ### Prometheus: query processing would load too many samples into memory in query execution
 If you encounter this error, reduce memory usage by setting `--memory-ratio` to a value less than 1. For example, `--memory-ratio 0.5` will halve the memory consumption.
