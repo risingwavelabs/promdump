@@ -13,15 +13,13 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
-	embed "github.com/risingwavelabs/promdump"
 )
 
 type DumpMultipartCfg struct {
-	Opt                *DumpOpt
-	Parts              int
-	OutputDir          string
-	Verbose            bool
-	MetricsNamesPreset *string
+	Opt       *DumpOpt
+	Parts     int
+	OutputDir string
+	Verbose   bool
 }
 
 func validateDumpOptions(cfg *DumpMultipartCfg) error {
@@ -77,17 +75,6 @@ func DumpMultipart(ctx context.Context, cfg *DumpMultipartCfg, cb DumpProgressCa
 		if cfg.Verbose {
 			fmt.Printf(format, args...)
 		}
-	}
-
-	if cfg.MetricsNamesPreset != nil {
-		content, err := embed.Static.ReadFile(fmt.Sprintf("static/%s.txt", *cfg.MetricsNamesPreset))
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("preset metrics names '%s' does not exist", *cfg.MetricsNamesPreset)
-			}
-			return errors.Wrap(err, "failed to read preset metrics names file")
-		}
-		cfg.Opt.MetricsNames = strings.Split(string(content), "\n")
 	}
 
 	v("Dumping Prometheus data from %s to %s\n", opt.Endpoint, cfg.OutputDir)
