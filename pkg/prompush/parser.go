@@ -111,7 +111,6 @@ func (a *AWSManagedPrometheusPusher) Push(ctx context.Context, reader io.Reader,
 			}
 			return errors.Wrapf(err, "failed to parse legacy format")
 		}
-		fmt.Println(string(line))
 		pw.Push(line)
 	}
 
