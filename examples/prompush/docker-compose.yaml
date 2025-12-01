@@ -3,6 +3,8 @@ services:
     image: victoriametrics/victoria-metrics:v1.117.1
     ports:
       - 8428:8428
+    command:
+      - "-import.maxLineLen=1GB"
     volumes:
       - vmdata:/victoria-metrics-data
 

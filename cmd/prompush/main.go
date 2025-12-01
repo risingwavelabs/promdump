@@ -1,24 +1,16 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"compress/gzip"
-	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"math"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/pkg/errors"
+	"github.com/risingwavelabs/promdump/pkg/prompush"
 	"github.com/risingwavelabs/promdump/utils"
 	"github.com/urfave/cli/v2"
 )
@@ -36,15 +28,9 @@ func main() {
 				Required: true,
 			},
 			&cli.StringFlag{
-				Name:     "vm-endpoint",
-				Aliases:  []string{"e"},
-				Usage:    "VictoriaMetrics endpoint URL",
-				Required: true,
-			},
-			&cli.BoolFlag{
-				Name:     "use-legacy-format",
-				Usage:    "Use legacy format",
-				Required: false,
+				Name:    "vm-endpoint",
+				Aliases: []string{"e"},
+				Usage:   "VictoriaMetrics endpoint URL",
 			},
 			&cli.IntFlag{
 				Name:     "batch-size",
@@ -52,6 +38,22 @@ func main() {
 				Usage:    "Batch size",
 				Required: false,
 				Value:    1000,
+			},
+			&cli.BoolFlag{
+				Name:     "noop",
+				Usage:    "Do not actually push data, just simulate",
+				Required: false,
+				Value:    false,
+			},
+			&cli.BoolFlag{
+				Name:  "amp",
+				Usage: "Parse response from the Prometheus-compatible APIs of AWS Managed Prometheus",
+				Value: false,
+			},
+			&cli.BoolFlag{
+				Name:  "ignore-invalid-files",
+				Usage: "Ignore invalid files and continue processing other files when a directory is provided as input",
+				Value: false,
 			},
 		},
 	}
@@ -74,14 +76,16 @@ type Item struct {
 
 func runPush(c *cli.Context) error {
 	vmEndpoint := c.String("vm-endpoint")
-	useLegacyFormat := c.Bool("use-legacy-format")
 	path := c.String("path")
 	batchSize := c.Int("batch-size")
+	noop := c.Bool("noop")
+	amp := c.Bool("amp")
+	ignoreInvalidFiles := c.Bool("ignore-invalid-files")
 
 	if batchSize <= 0 {
 		return fmt.Errorf("batch-size must be greater than 0")
 	}
-	if len(vmEndpoint) == 0 {
+	if len(vmEndpoint) == 0 && !noop {
 		return fmt.Errorf("vm-endpoint is required")
 	}
 	if len(path) == 0 {
@@ -108,8 +112,15 @@ func runPush(c *cli.Context) error {
 		files = []string{path}
 	}
 
-	pw := NewPushWorker(c.Context, vmEndpoint, batchSize)
+	pw := prompush.NewPushWorker(c.Context, vmEndpoint, batchSize, noop)
 	defer pw.Close()
+
+	var pusher prompush.Pusher
+	if amp {
+		pusher = &prompush.AWSManagedPrometheusPusher{}
+	} else {
+		pusher = &prompush.NDJSONPusher{}
+	}
 
 	for i, filename := range files {
 		fmt.Printf("\nPushing %s (%d/%d)\n", filename, i+1, len(files))
@@ -138,11 +149,7 @@ func runPush(c *cli.Context) error {
 			reader = file
 		}
 
-		scanner := bufio.NewScanner(reader)
-		scanner.Buffer(make([]byte, 1024*1024), 100*1024*1024) // 100MB max line size
-		for scanner.Scan() {
-			line := scanner.Bytes()
-
+		showProgress := func() error {
 			// Get current position in the compressed file
 			currentPos, err := file.Seek(0, io.SeekCurrent)
 			if err != nil {
@@ -151,136 +158,13 @@ func runPush(c *cli.Context) error {
 
 			// Display progress based on compressed file position
 			fmt.Printf("\033[2K\rprogress: %s", utils.RenderProgressBar(float32(currentPos)/float32(fileSize)))
-
-			if len(line) == 0 {
-				continue
-			}
-			if !useLegacyFormat {
-				pw.Push(line)
-				continue
-			}
-
-			var legacy LegacyFormat
-			if err := json.Unmarshal(line, &legacy); err != nil {
-				return fmt.Errorf("failed to unmarshal line: %w, line=%s", err, string(line))
-			}
-			item := Item{
-				Metric: legacy.Metric,
-			}
-
-			for _, v := range legacy.Values {
-				val, err := strconv.ParseFloat(v[1].(string), 64)
-				if err != nil {
-					return fmt.Errorf("failed to parse value: %w", err)
-				}
-				if math.IsNaN(val) {
-					continue
-				}
-				item.Timestamps = append(item.Timestamps, int64(1000*v[0].(float64)))
-				item.Values = append(item.Values, val)
-			}
-			if len(item.Timestamps) == 0 {
-				fmt.Printf("\nskipping line: %v\n", utils.TruncateString(string(line), 100))
-				continue
-			}
-			l, err := json.Marshal(item)
-			if err != nil {
-				return fmt.Errorf("failed to marshal item: %w", err)
-			}
-			l = append(l, '\n')
-			pw.Push(l)
+			return nil
 		}
 
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("error reading file: %w", err)
+		if err := pusher.Push(c.Context, reader, pw, showProgress, ignoreInvalidFiles); err != nil {
+			return errors.Wrap(err, "failed to push data")
 		}
 	}
 
 	return pw.Flush(c.Context)
-}
-
-type PushWorker struct {
-	vmEndpoint string
-	c          chan []byte
-	buf        bytes.Buffer
-	cnt        int
-	mu         sync.Mutex
-}
-
-func NewPushWorker(ctx context.Context, vmEndpoint string, batchSize int) *PushWorker {
-	w := &PushWorker{
-		vmEndpoint: vmEndpoint,
-		c:          make(chan []byte, batchSize),
-		cnt:        0,
-	}
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case line := <-w.c:
-				if w.cnt == batchSize {
-					if err := w.Flush(ctx); err != nil {
-						log.Printf("failed to flush: %s", err)
-					}
-				}
-				w.Append(line)
-			}
-		}
-	}()
-
-	return w
-}
-
-func (w *PushWorker) Append(line []byte) {
-	w.buf.Write(line)
-	w.cnt++
-}
-
-func (w *PushWorker) Push(line []byte) {
-	w.c <- line
-}
-
-func (w *PushWorker) Flush(ctx context.Context) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.buf.Len() == 0 {
-		return nil
-	}
-
-	// Create a copy of the buffer data to avoid modification during HTTP transfer
-	data := make([]byte, w.buf.Len())
-	copy(data, w.buf.Bytes())
-
-	// Use http.Client directly instead of http.Post to keep mutex locked during transmission
-	req, err := http.NewRequestWithContext(ctx, "POST", w.vmEndpoint+"/api/v1/import", bytes.NewReader(data))
-	if err != nil {
-		return errors.Wrap(err, "failed to create request")
-	}
-	req.Header.Set("Content-Type", "application/jsonl")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return errors.Wrap(err, "failed to push metrics")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to push metrics: status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	// reset the buffer
-	w.buf.Reset()
-	w.cnt = 0
-	return nil
-}
-
-func (w *PushWorker) Close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = w.Flush(ctx)
-	close(w.c)
 }

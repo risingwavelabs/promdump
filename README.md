@@ -66,6 +66,10 @@ Then open [http://localhost:3001](http://localhost:3001)
 
 ## Troubleshooting
 
+### Dump metrics for AWS Managed Prometheus (AMP)
+As AMP doesn't support direct API access (need complex authentication with AK/SK involved), Promdump currectly does not support to connect the AMP Prometheus-compatible APIs directly. 
+Please follow [this documentation](https://docs.aws.amazon.com/prometheus/latest/userguide/AMP-compatible-APIs.html) to expose all RisingWave related metrics. Make sure the result type is `matrix`, and each file can only contain one query response.
+
 ### Promdump for Google Cloud Managed Prometheus
 
 Google Cloud Managed Prometheus does not support the `--query` option. Instead, you must specify metric names in a file.
