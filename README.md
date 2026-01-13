@@ -18,12 +18,12 @@ GOBIN=$(pwd) go install github.com/risingwavelabs/promdump/cmd/promdump@latest
 ### 2. Dump all metrics to a file
 
 ```shell
-./promdump dump -e http://localhost:9500 --gizp
+./promdump dump -e http://localhost:9500 --gzip
 ```
 This will dump **ALL metrics** to a single file. Note that you can also specify the time range, and filters.  For example, to get time series with label `namespace="risingwave"`:
 
 ```shell
-./promdump dump -e http://localhost:9500 --query '{namespace="risingwave"}' --gizp
+./promdump dump -e http://localhost:9500 --query '{namespace="risingwave"}' --gzip
 ```
 
 Or use `--grafana-dashboard <file path or version>` to retrieve all metrics names needed from a Grafana dashboard, then use those metrics names to dump metrics:
